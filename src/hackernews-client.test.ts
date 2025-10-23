@@ -240,5 +240,4 @@ describe('HackerNewsClient', () => {
       expect(posts.length).toBeLessThanOrEqual(3);
     }, 15000);
   });
-
 });
