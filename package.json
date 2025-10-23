@@ -1,0 +1,32 @@
+{
+  "name": "hackernews-companion",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "start": "bun run dist/index.js",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\""
+  },
+  "keywords": ["hackernews", "companion", "typescript"],
+  "author": "",
+  "license": "ISC",
+  "description": "A HackerNews companion application built with TypeScript",
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.46.2",
+    "@typescript-eslint/parser": "^8.46.2",
+    "bun-types": "^1.3.1",
+    "eslint": "^9.38.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3"
+  }
+}
