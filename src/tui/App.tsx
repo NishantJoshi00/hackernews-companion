@@ -2,7 +2,7 @@
  * Main TUI Application Component
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, useInput, useApp, Text } from 'ink';
 import { HackerNewsClient } from '../hackernews-client.js';
 import type { HackerNewsPost } from '../hackernews-post.js';
@@ -12,15 +12,36 @@ import { FeedView } from './components/FeedView.js';
 import { PostView } from './components/PostView.js';
 import { HelpView } from './components/HelpView.js';
 import { flattenComments } from './utils.js';
+import { EventLogger, EventType } from '../events/index.js';
 
 const client = new HackerNewsClient();
+const logger = new EventLogger();
 
 export function App(): React.JSX.Element {
   const { exit } = useApp();
+  const appStartTime = useRef<Date>(new Date());
+  const previousFeedType = useRef<FeedType>(FeedType.TOP);
 
-  // Clear screen on unmount
+  // Initialize logger and log app start
   useEffect(() => {
+    logger.initialize().catch(console.error);
+
+    const stdout = process.stdout;
+    logger.log(EventType.APP_STARTED, {
+      terminalWidth: stdout.columns,
+      terminalHeight: stdout.rows,
+    });
+
     return () => {
+      // Log app exit and save
+      const sessionDuration = Math.floor((Date.now() - appStartTime.current.getTime()) / 1000);
+      logger.log(EventType.APP_EXITED, {
+        sessionDurationSeconds: sessionDuration,
+        totalEvents: logger.getEvents().length,
+      });
+
+      logger.save().catch(console.error);
+
       // Clear screen and move cursor to top
       process.stdout.write('\x1b[2J\x1b[H');
     };
@@ -52,8 +73,27 @@ export function App(): React.JSX.Element {
   const loadFeed = async (feedType: FeedType): Promise<void> => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
+    const startTime = Date.now();
+
     try {
       const posts = await client.getPosts(feedType, 30);
+      const loadTime = Date.now() - startTime;
+
+      // Log feed change if different from previous
+      if (feedType !== previousFeedType.current) {
+        logger.log(EventType.FEED_CHANGED, {
+          from: previousFeedType.current,
+          to: feedType,
+        });
+        previousFeedType.current = feedType;
+      }
+
+      logger.log(EventType.FEED_LOADED, {
+        feedType,
+        postCount: posts.length,
+        loadTimeMs: loadTime,
+      });
+
       setState((prev) => ({
         ...prev,
         feedType,
@@ -62,6 +102,11 @@ export function App(): React.JSX.Element {
         selectedPostIndex: 0,
       }));
     } catch (error) {
+      logger.log(EventType.LOAD_FAILED, {
+        what: 'feed',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
       setState((prev) => ({
         ...prev,
         loading: false,
@@ -72,6 +117,17 @@ export function App(): React.JSX.Element {
 
   // Load post details and comments
   const loadPostDetails = async (post: HackerNewsPost): Promise<void> => {
+    // Track post viewing time
+    logger.trackPostOpened(post.id, post.title);
+
+    logger.log(EventType.POST_VIEWED, {
+      postId: post.id,
+      postTitle: post.title,
+      postAuthor: post.author,
+      postScore: post.score,
+      commentCount: post.commentCount,
+    });
+
     setState((prev) => ({
       ...prev,
       view: 'post',
@@ -94,6 +150,11 @@ export function App(): React.JSX.Element {
         loading: false,
       }));
     } catch (error) {
+      logger.log(EventType.LOAD_FAILED, {
+        what: 'comments',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
       setState((prev) => ({
         ...prev,
         loading: false,
@@ -111,7 +172,18 @@ export function App(): React.JSX.Element {
     }
 
     if (input === 'h' || input === '?') {
-      setState((prev) => ({ ...prev, view: prev.view === 'help' ? 'feed' : 'help' }));
+      setState((prev) => {
+        const isOpening = prev.view !== 'help';
+        const fromView = prev.view === 'post' ? 'post' : 'feed';
+
+        if (isOpening) {
+          logger.log(EventType.HELP_OPENED, { fromView });
+        } else {
+          logger.log(EventType.HELP_CLOSED, {});
+        }
+
+        return { ...prev, view: prev.view === 'help' ? 'feed' : 'help' };
+      });
       return;
     }
 
@@ -184,6 +256,14 @@ export function App(): React.JSX.Element {
     } else if (input === 'o') {
       const selectedPost = state.posts[state.selectedPostIndex];
       if (selectedPost !== undefined) {
+        const url = selectedPost.url ?? selectedPost.getHackerNewsUrl();
+
+        logger.log(EventType.ARTICLE_OPENED_BROWSER, {
+          postId: selectedPost.id,
+          postTitle: selectedPost.title,
+          url,
+        });
+
         selectedPost.openArticleInBrowser().catch((error: unknown) => {
           if (error instanceof Error && error.message.includes('does not have an external URL')) {
             selectedPost.openInBrowser().catch(console.error);
@@ -195,9 +275,19 @@ export function App(): React.JSX.Element {
     } else if (input === 'c' || input === ' ') {
       const selectedPost = state.posts[state.selectedPostIndex];
       if (selectedPost !== undefined) {
+        logger.log(EventType.POST_OPENED_BROWSER, {
+          postId: selectedPost.id,
+          postTitle: selectedPost.title,
+          url: selectedPost.getHackerNewsUrl(),
+        });
+
         selectedPost.openInBrowser().catch(console.error);
       }
     } else if (input === 'r') {
+      logger.log(EventType.FEED_REFRESHED, {
+        feedType: state.feedType,
+      });
+
       loadFeed(state.feedType).catch(console.error);
     }
   };
@@ -225,6 +315,17 @@ export function App(): React.JSX.Element {
     else if (input === ' ') {
       const selectedComment = state.flatComments[state.selectedCommentIndex];
       if (selectedComment !== undefined) {
+        const isCollapsed = state.collapsedComments.has(selectedComment.id);
+
+        logger.log(
+          isCollapsed ? EventType.COMMENT_EXPANDED : EventType.COMMENT_COLLAPSED,
+          {
+            commentId: selectedComment.id,
+            commentAuthor: selectedComment.author,
+            replyCount: selectedComment.replies.length,
+          },
+        );
+
         setState((prev) => {
           const newCollapsed = new Set(prev.collapsedComments);
           if (newCollapsed.has(selectedComment.id)) {
@@ -244,6 +345,14 @@ export function App(): React.JSX.Element {
 
     // Actions
     else if (input === 'o' && state.currentPost !== null) {
+      const url = state.currentPost.url ?? state.currentPost.getHackerNewsUrl();
+
+      logger.log(EventType.ARTICLE_OPENED_BROWSER, {
+        postId: state.currentPost.id,
+        postTitle: state.currentPost.title,
+        url,
+      });
+
       state.currentPost.openArticleInBrowser().catch((error: unknown) => {
         if (error instanceof Error && error.message.includes('does not have an external URL')) {
           state.currentPost?.openInBrowser().catch(console.error);
@@ -251,9 +360,32 @@ export function App(): React.JSX.Element {
           console.error('Failed to open:', error);
         }
       });
-    } else if (input === 'c' && state.currentPost !== null) {
-      state.currentPost.openInBrowser().catch(console.error);
+    } else if (input === 'c') {
+      // Open selected comment in browser
+      const selectedComment = state.flatComments[state.selectedCommentIndex];
+      if (selectedComment !== undefined && state.currentPost !== null) {
+        logger.log(EventType.COMMENT_OPENED_BROWSER, {
+          commentId: selectedComment.id,
+          commentAuthor: selectedComment.author,
+          postId: state.currentPost.id,
+          postTitle: state.currentPost.title,
+          url: `https://news.ycombinator.com/item?id=${selectedComment.id}`,
+        });
+
+        state.currentPost.openCommentInBrowser(selectedComment.id).catch(console.error);
+      }
     } else if (key.escape || key.backspace) {
+      // Track time spent and log post closed
+      const timeSpent = logger.trackPostClosed();
+
+      if (state.currentPost !== null) {
+        logger.log(EventType.POST_CLOSED, {
+          postId: state.currentPost.id,
+          postTitle: state.currentPost.title,
+          timeSpentSeconds: timeSpent,
+        });
+      }
+
       setState((prev) => ({
         ...prev,
         view: 'feed',

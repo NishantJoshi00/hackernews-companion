@@ -27,12 +27,21 @@ export function PostView({
   const separator = '─'.repeat(Math.max(0, terminalWidth - 4)); // Account for padding
 
   // Calculate header lines dynamically
-  const postTextLines = post.text !== null ? Math.ceil(stripHtml(post.text).slice(0, 200).length / 60) : 0;
-  const headerLines = 9 + postTextLines; // Back, divider, title, metadata, domain, text, actions, divider, comments header
+  // Back (1) + divider (1) + title (1-2) + metadata (1) + domain (1) + text (variable) + actions (2) + divider (1) + comments header (1)
+  const titleLines = Math.ceil(post.title.length / (terminalWidth - 4));
+  const postTextLines = post.text !== null ? Math.min(3, Math.ceil(stripHtml(post.text).slice(0, 200).length / (terminalWidth - 4))) : 0;
+  const headerLines = 9 + titleLines + postTextLines;
   const footerLines = 2; // Divider + footer
 
-  // Each comment takes approximately 3 lines (author line + text + spacing)
-  const maxVisibleComments = Math.floor((terminalHeight - headerLines - footerLines) / 3);
+  // Each comment takes more space due to:
+  // - Indentation (reduces effective width)
+  // - Author line (1)
+  // - Text wrapping (3-5 lines for nested comments)
+  // - Spacing (1)
+  // Conservative estimate: 7 lines per comment (accounts for deep nesting)
+  const linesPerComment = 7;
+  const availableLines = Math.max(10, terminalHeight - headerLines - footerLines);
+  const maxVisibleComments = Math.max(1, Math.floor(availableLines / linesPerComment));
 
   // Calculate visible window for comments
   const { startIndex, endIndex } = useMemo(() => {
@@ -131,7 +140,7 @@ export function PostView({
 
       {/* Footer */}
       <Box>
-        <Text dimColor>j/k:navigate  Space:collapse  o:open  Esc:back  q:quit</Text>
+        <Text dimColor>j/k:navigate  Space:collapse  o:article  c:comment  Esc:back  q:quit</Text>
       </Box>
     </Box>
   );
