@@ -2,7 +2,7 @@
  * Main TUI Application Component
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Box, useInput, useApp, Text } from 'ink';
 import { HackerNewsClient } from '../hackernews-client.js';
 import type { HackerNewsPost } from '../hackernews-post.js';
@@ -11,7 +11,7 @@ import type { AppState } from './types.js';
 import { FeedView } from './components/FeedView.js';
 import { PostView } from './components/PostView.js';
 import { HelpView } from './components/HelpView.js';
-import { flattenComments } from './utils.js';
+import { flattenComments, getDomain } from './utils.js';
 import { EventLogger, EventType } from '../events/index.js';
 
 const client = new HackerNewsClient();
@@ -60,7 +60,23 @@ export function App(): React.JSX.Element {
     loading: false,
     error: null,
     statusMessage: null,
+    searchQuery: '',
+    isSearchMode: false,
   });
+
+  // Calculate filtered posts based on search query
+  const filteredPosts = useMemo(() => {
+    if (!state.searchQuery) return state.posts;
+
+    const query = state.searchQuery.toLowerCase();
+    return state.posts.filter((post) => {
+      const title = post.title.toLowerCase();
+      const author = post.author.toLowerCase();
+      const domain = getDomain(post.url).toLowerCase();
+
+      return title.includes(query) || author.includes(query) || domain.includes(query);
+    });
+  }, [state.posts, state.searchQuery]);
 
   // Load initial feed
   useEffect(() => {
@@ -163,6 +179,15 @@ export function App(): React.JSX.Element {
     }
   };
 
+  // Search handler
+  const handleSearchChange = (value: string): void => {
+    setState((prev) => ({
+      ...prev,
+      searchQuery: value,
+      selectedPostIndex: 0, // Reset selection when search changes
+    }));
+  };
+
   // Keyboard input handler
   useInput((input, key) => {
     // Global shortcuts
@@ -187,8 +212,8 @@ export function App(): React.JSX.Element {
       return;
     }
 
-    // Feed shortcuts (1-6)
-    if (state.view === 'feed') {
+    // Feed shortcuts (1-6) - don't trigger when in search mode
+    if (state.view === 'feed' && !state.isSearchMode) {
       const feedMap: Record<string, FeedType> = {
         '1': FeedType.TOP,
         '2': FeedType.NEW,
@@ -228,33 +253,74 @@ export function App(): React.JSX.Element {
 
   // Feed view input
   const handleFeedInput = (input: string, key: Key): void => {
-    // Navigation
-    if (input === 'j' || key.downArrow) {
-      setState((prev) => ({
-        ...prev,
-        selectedPostIndex: Math.min(prev.selectedPostIndex + 1, prev.posts.length - 1),
-      }));
-    } else if (input === 'k' || key.upArrow) {
-      setState((prev) => ({
-        ...prev,
-        selectedPostIndex: Math.max(prev.selectedPostIndex - 1, 0),
-      }));
-    } else if (input === 'g') {
-      setState((prev) => ({ ...prev, selectedPostIndex: 0 }));
-    } else if (input === 'G') {
-      setState((prev) => ({ ...prev, selectedPostIndex: prev.posts.length - 1 }));
+    // Handle search mode toggle
+    if (input === '/') {
+      setState((prev) => ({ ...prev, isSearchMode: true }));
+      return;
     }
 
-    // Actions
+    // Escape behavior: if searching, clear search; otherwise ignore
+    if (key.escape) {
+      if (state.searchQuery || state.isSearchMode) {
+        setState((prev) => ({
+          ...prev,
+          isSearchMode: false,
+          searchQuery: '',
+          selectedPostIndex: 0,
+        }));
+      }
+      return;
+    }
+
+    // Navigation keys exit search input mode but keep filter active
+    if (input === 'j' || input === 'k' || key.downArrow || key.upArrow) {
+      if (state.isSearchMode) {
+        // Exit search input mode but keep the filter
+        setState((prev) => ({
+          ...prev,
+          isSearchMode: false,
+        }));
+      }
+
+      // Then handle navigation
+      if (input === 'j' || key.downArrow) {
+        setState((prev) => ({
+          ...prev,
+          selectedPostIndex: Math.min(prev.selectedPostIndex + 1, filteredPosts.length - 1),
+        }));
+      } else if (input === 'k' || key.upArrow) {
+        setState((prev) => ({
+          ...prev,
+          selectedPostIndex: Math.max(prev.selectedPostIndex - 1, 0),
+        }));
+      }
+      return;
+    }
+
+    // Block other actions when in search input mode (let TextInput handle typing)
+    if (state.isSearchMode) {
+      return;
+    }
+
+    // Jump navigation (only when not in search input mode)
+    if (input === 'g') {
+      setState((prev) => ({ ...prev, selectedPostIndex: 0 }));
+      return;
+    } else if (input === 'G') {
+      setState((prev) => ({ ...prev, selectedPostIndex: filteredPosts.length - 1 }));
+      return;
+    }
+
+    // Actions (use filtered posts)
     else if (key.return) {
-      const selectedPost = state.posts[state.selectedPostIndex];
+      const selectedPost = filteredPosts[state.selectedPostIndex];
       if (selectedPost !== undefined) {
         loadPostDetails(selectedPost).catch((error: unknown) => {
           console.error('Failed to load post:', error);
         });
       }
     } else if (input === 'o') {
-      const selectedPost = state.posts[state.selectedPostIndex];
+      const selectedPost = filteredPosts[state.selectedPostIndex];
       if (selectedPost !== undefined) {
         const url = selectedPost.url ?? selectedPost.getHackerNewsUrl();
 
@@ -273,7 +339,7 @@ export function App(): React.JSX.Element {
         });
       }
     } else if (input === 'c' || input === ' ') {
-      const selectedPost = state.posts[state.selectedPostIndex];
+      const selectedPost = filteredPosts[state.selectedPostIndex];
       if (selectedPost !== undefined) {
         logger.log(EventType.POST_OPENED_BROWSER, {
           postId: selectedPost.id,
@@ -405,8 +471,12 @@ export function App(): React.JSX.Element {
         <FeedView
           feedType={state.feedType}
           posts={state.posts}
+          filteredPosts={filteredPosts}
           selectedIndex={state.selectedPostIndex}
           loading={state.loading}
+          searchQuery={state.searchQuery}
+          isSearchMode={state.isSearchMode}
+          onSearchChange={handleSearchChange}
         />
       ) : null}
 

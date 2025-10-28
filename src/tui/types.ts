@@ -21,6 +21,8 @@ export interface AppState {
   loading: boolean;
   error: string | null;
   statusMessage: string | null;
+  searchQuery: string;
+  isSearchMode: boolean;
 }
 
 export interface FeedInfo {

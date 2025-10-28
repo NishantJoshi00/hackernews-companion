@@ -4,6 +4,7 @@
 
 import React, { useMemo } from 'react';
 import { Box, Text, useStdout } from 'ink';
+import TextInput from 'ink-text-input';
 import type { HackerNewsPost } from '../../hackernews-post.js';
 import type { FeedType } from '../../types.js';
 import { timeAgo, getDomain, formatCommentCount } from '../utils.js';
@@ -11,15 +12,23 @@ import { timeAgo, getDomain, formatCommentCount } from '../utils.js';
 interface FeedViewProps {
   feedType: FeedType;
   posts: HackerNewsPost[];
+  filteredPosts: HackerNewsPost[];
   selectedIndex: number;
   loading: boolean;
+  searchQuery: string;
+  isSearchMode: boolean;
+  onSearchChange: (value: string) => void;
 }
 
 export function FeedView({
   feedType,
   posts,
+  filteredPosts,
   selectedIndex,
   loading,
+  searchQuery,
+  isSearchMode,
+  onSearchChange,
 }: FeedViewProps): React.JSX.Element {
   const { stdout } = useStdout();
   const terminalHeight = stdout?.rows ?? 24;
@@ -27,13 +36,14 @@ export function FeedView({
   const separator = '─'.repeat(Math.max(0, terminalWidth - 4)); // Account for padding
 
   // Calculate visible window
-  // Reserve 5 lines for header/footer
-  const maxVisiblePosts = Math.floor((terminalHeight - 5) / 3); // Each post takes ~3 lines
+  // Reserve lines for header/footer (add 2 more if search/filter is showing)
+  const reservedLines = isSearchMode || searchQuery ? 7 : 5;
+  const maxVisiblePosts = Math.floor((terminalHeight - reservedLines) / 3); // Each post takes ~3 lines
 
   const { startIndex, endIndex } = useMemo(() => {
     const half = Math.floor(maxVisiblePosts / 2);
     let start = Math.max(0, selectedIndex - half);
-    let end = Math.min(posts.length, start + maxVisiblePosts);
+    let end = Math.min(filteredPosts.length, start + maxVisiblePosts);
 
     // Adjust if we're near the end
     if (end - start < maxVisiblePosts) {
@@ -41,9 +51,9 @@ export function FeedView({
     }
 
     return { startIndex: start, endIndex: end };
-  }, [selectedIndex, posts.length, maxVisiblePosts]);
+  }, [selectedIndex, filteredPosts.length, maxVisiblePosts]);
 
-  const visiblePosts = posts.slice(startIndex, endIndex);
+  const visiblePosts = filteredPosts.slice(startIndex, endIndex);
   const feedLabels: Record<FeedType, string> = {
     top: 'Top Stories',
     new: 'New Stories',
@@ -62,14 +72,28 @@ export function FeedView({
         <Text bold color="cyan">
           HN: {feedLabel}
         </Text>
-        <Text dimColor> ({posts.length})</Text>
+        <Text dimColor> ({filteredPosts.length}{searchQuery ? `/${posts.length}` : ''})</Text>
         <Box flexGrow={1} />
         <Text dimColor>
-          [{selectedIndex + 1}/{posts.length}]
+          [{selectedIndex + 1}/{filteredPosts.length}]
         </Text>
       </Box>
 
       <Text dimColor>{separator}</Text>
+
+      {/* Search Bar */}
+      {isSearchMode ? (
+        <Box>
+          <Text color="yellow">Search: </Text>
+          <TextInput value={searchQuery} onChange={onSearchChange} />
+        </Box>
+      ) : searchQuery ? (
+        <Box>
+          <Text color="yellow">Filter: </Text>
+          <Text color="cyan">{searchQuery}</Text>
+          <Text dimColor> (press / to edit, Esc to clear)</Text>
+        </Box>
+      ) : null}
 
       {/* Loading State */}
       {loading && posts.length === 0 ? (
@@ -96,9 +120,9 @@ export function FeedView({
       ) : null}
 
       {/* No Posts */}
-      {!loading && posts.length === 0 ? (
+      {!loading && filteredPosts.length === 0 ? (
         <Box paddingY={2}>
-          <Text dimColor>No posts found</Text>
+          <Text dimColor>{searchQuery ? 'No matching posts' : 'No posts found'}</Text>
         </Box>
       ) : null}
 
@@ -106,7 +130,7 @@ export function FeedView({
 
       {/* Footer */}
       <Box>
-        <Text dimColor>j/k:navigate  Enter:view  o:open  Space:HN  h:help  q:quit  1-6:feeds</Text>
+        <Text dimColor>j/k:navigate  Enter:view  o:open  /:search  Space:HN  h:help  q:quit  1-6:feeds</Text>
       </Box>
     </Box>
   );

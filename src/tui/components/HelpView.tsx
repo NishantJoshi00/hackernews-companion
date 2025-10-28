@@ -26,6 +26,9 @@ export function HelpView(): React.JSX.Element {
         <Text>  c, Space       Open HN discussion in browser (feed view)</Text>
         <Text>  Space          Collapse/expand comment (post view)</Text>
         <Text>  r              Refresh current feed</Text>
+        <Text>  /              Search posts (title, author, domain)</Text>
+        <Text>  j/k/arrows     Exit search input, navigate filtered results</Text>
+        <Text>  Esc            Clear filter and exit search</Text>
         <Text> </Text>
 
         <Text bold>FEEDS</Text>
