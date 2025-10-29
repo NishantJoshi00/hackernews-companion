@@ -23,6 +23,8 @@ export interface AppState {
   statusMessage: string | null;
   searchQuery: string;
   isSearchMode: boolean;
+  commentSearchQuery: string;
+  isCommentSearchMode: boolean;
 }
 
 export interface FeedInfo {

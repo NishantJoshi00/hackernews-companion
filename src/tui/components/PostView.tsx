@@ -4,6 +4,7 @@
 
 import React, { useMemo } from 'react';
 import { Box, Text, useStdout } from 'ink';
+import TextInput from 'ink-text-input';
 import type { HackerNewsPost } from '../../hackernews-post.js';
 import { timeAgo, getDomain, stripHtml } from '../utils.js';
 import type { FlatComment } from '../utils.js';
@@ -11,15 +12,23 @@ import type { FlatComment } from '../utils.js';
 interface PostViewProps {
   post: HackerNewsPost;
   flatComments: FlatComment[];
+  filteredComments: FlatComment[];
   selectedCommentIndex: number;
   loading: boolean;
+  commentSearchQuery: string;
+  isCommentSearchMode: boolean;
+  onCommentSearchChange: (value: string) => void;
 }
 
 export function PostView({
   post,
   flatComments,
+  filteredComments,
   selectedCommentIndex,
   loading,
+  commentSearchQuery,
+  isCommentSearchMode,
+  onCommentSearchChange,
 }: PostViewProps): React.JSX.Element {
   const { stdout } = useStdout();
   const terminalHeight = stdout?.rows ?? 24;
@@ -51,7 +60,7 @@ export function PostView({
 
     const half = Math.floor(maxVisibleComments / 2);
     let start = Math.max(0, selectedCommentIndex - half);
-    let end = Math.min(flatComments.length, start + maxVisibleComments);
+    let end = Math.min(filteredComments.length, start + maxVisibleComments);
 
     // Adjust if we're near the end
     if (end - start < maxVisibleComments) {
@@ -59,9 +68,9 @@ export function PostView({
     }
 
     return { startIndex: start, endIndex: end };
-  }, [selectedCommentIndex, flatComments.length, maxVisibleComments]);
+  }, [selectedCommentIndex, filteredComments.length, maxVisibleComments]);
 
-  const visibleComments = flatComments.slice(startIndex, endIndex);
+  const visibleComments = filteredComments.slice(startIndex, endIndex);
   const domain = getDomain(post.url);
   const ago = timeAgo(post.time);
 
@@ -98,13 +107,28 @@ export function PostView({
       {/* Comments header */}
       <Box marginY={1}>
         <Text bold>Comments ({post.commentCount}):</Text>
-        {flatComments.length > 0 ? (
+        {filteredComments.length > 0 ? (
           <Text dimColor>
             {' '}
-            [{selectedCommentIndex + 1}/{flatComments.length}]
+            [{selectedCommentIndex + 1}/{filteredComments.length}
+            {commentSearchQuery ? `/${flatComments.length}` : ''}]
           </Text>
         ) : null}
       </Box>
+
+      {/* Search Bar */}
+      {isCommentSearchMode ? (
+        <Box marginBottom={1}>
+          <Text color="yellow">Search: </Text>
+          <TextInput value={commentSearchQuery} onChange={onCommentSearchChange} />
+        </Box>
+      ) : commentSearchQuery ? (
+        <Box marginBottom={1}>
+          <Text color="yellow">Filter: </Text>
+          <Text color="cyan">{commentSearchQuery}</Text>
+          <Text dimColor> (press / to edit, Esc to clear)</Text>
+        </Box>
+      ) : null}
 
       {/* Loading state */}
       {loading ? (
@@ -130,9 +154,9 @@ export function PostView({
       ) : null}
 
       {/* No comments */}
-      {!loading && flatComments.length === 0 ? (
+      {!loading && filteredComments.length === 0 ? (
         <Box paddingY={1}>
-          <Text dimColor>No comments yet</Text>
+          <Text dimColor>{commentSearchQuery ? 'No matching comments' : 'No comments yet'}</Text>
         </Box>
       ) : null}
 
@@ -140,7 +164,7 @@ export function PostView({
 
       {/* Footer */}
       <Box>
-        <Text dimColor>j/k:navigate  Space:collapse  o:article  c:comment  Esc:back  q:quit</Text>
+        <Text dimColor>j/k:navigate  Space:collapse  /:search  o:article  c:comment  Esc:back  q:quit</Text>
       </Box>
     </Box>
   );

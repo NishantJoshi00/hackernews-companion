@@ -6,12 +6,12 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Box, useInput, useApp, Text } from 'ink';
 import { HackerNewsClient } from '../hackernews-client.js';
 import type { HackerNewsPost } from '../hackernews-post.js';
-import { FeedType } from '../types.js';
+import { FeedType, type Comment } from '../types.js';
 import type { AppState } from './types.js';
 import { FeedView } from './components/FeedView.js';
 import { PostView } from './components/PostView.js';
 import { HelpView } from './components/HelpView.js';
-import { flattenComments, getDomain } from './utils.js';
+import { flattenComments, getDomain, stripHtml } from './utils.js';
 import { EventLogger, EventType } from '../events/index.js';
 
 const client = new HackerNewsClient();
@@ -62,6 +62,8 @@ export function App(): React.JSX.Element {
     statusMessage: null,
     searchQuery: '',
     isSearchMode: false,
+    commentSearchQuery: '',
+    isCommentSearchMode: false,
   });
 
   // Calculate filtered posts based on search query
@@ -77,6 +79,56 @@ export function App(): React.JSX.Element {
       return title.includes(query) || author.includes(query) || domain.includes(query);
     });
   }, [state.posts, state.searchQuery]);
+
+  // Helper function to search comments and collect matching IDs + parent IDs to expand
+  const searchCommentsRecursive = (
+    comments: Comment[],
+    query: string,
+    parentIds: number[] = [],
+  ): { matchingIds: Set<number>; parentsToExpand: Set<number> } => {
+    const matchingIds = new Set<number>();
+    const parentsToExpand = new Set<number>();
+
+    const search = (comments: Comment[], parents: number[]): void => {
+      for (const comment of comments) {
+        const text = stripHtml(comment.text).toLowerCase();
+        const author = comment.author.toLowerCase();
+        const isMatch = text.includes(query) || author.includes(query);
+
+        if (isMatch) {
+          matchingIds.add(comment.id);
+          // Add all parent IDs to expand
+          parents.forEach((pid) => parentsToExpand.add(pid));
+        }
+
+        // Recursively search replies
+        if (comment.replies.length > 0) {
+          search(comment.replies, [...parents, comment.id]);
+        }
+      }
+    };
+
+    search(comments, parentIds);
+    return { matchingIds, parentsToExpand };
+  };
+
+  // Calculate filtered comments with auto-expansion
+  const filteredComments = useMemo(() => {
+    if (!state.commentSearchQuery) return state.flatComments;
+
+    const query = state.commentSearchQuery.toLowerCase();
+    const { matchingIds, parentsToExpand } = searchCommentsRecursive(state.comments, query);
+
+    // Create new collapsed set with parents removed
+    const newCollapsed = new Set(state.collapsedComments);
+    parentsToExpand.forEach((id) => newCollapsed.delete(id));
+
+    // Re-flatten with updated collapsed set
+    const allFlat = flattenComments(state.comments, newCollapsed);
+
+    // Filter to only matching comments
+    return allFlat.filter((comment) => matchingIds.has(comment.id));
+  }, [state.comments, state.commentSearchQuery, state.collapsedComments]);
 
   // Load initial feed
   useEffect(() => {
@@ -185,6 +237,15 @@ export function App(): React.JSX.Element {
       ...prev,
       searchQuery: value,
       selectedPostIndex: 0, // Reset selection when search changes
+    }));
+  };
+
+  // Comment search handler
+  const handleCommentSearchChange = (value: string): void => {
+    setState((prev) => ({
+      ...prev,
+      commentSearchQuery: value,
+      selectedCommentIndex: 0, // Reset selection when search changes
     }));
   };
 
@@ -360,26 +421,69 @@ export function App(): React.JSX.Element {
 
   // Post view input
   const handlePostInput = (input: string, key: Key): void => {
-    // Navigation
-    if (input === 'j' || key.downArrow) {
-      setState((prev) => ({
-        ...prev,
-        selectedCommentIndex: Math.min(prev.selectedCommentIndex + 1, prev.flatComments.length - 1),
-      }));
-    } else if (input === 'k' || key.upArrow) {
-      setState((prev) => ({
-        ...prev,
-        selectedCommentIndex: Math.max(prev.selectedCommentIndex - 1, 0),
-      }));
-    } else if (input === 'g') {
+    // Handle comment search mode toggle
+    if (input === '/') {
+      setState((prev) => ({ ...prev, isCommentSearchMode: true }));
+      return;
+    }
+
+    // Escape behavior: if searching, clear search; otherwise go back to feed
+    if (key.escape || key.backspace) {
+      if (state.commentSearchQuery || state.isCommentSearchMode) {
+        setState((prev) => ({
+          ...prev,
+          isCommentSearchMode: false,
+          commentSearchQuery: '',
+          selectedCommentIndex: 0,
+        }));
+        return;
+      }
+
+      // If not searching, go back to feed (handled below)
+    }
+
+    // Navigation keys exit search input mode but keep filter active
+    if (input === 'j' || input === 'k' || key.downArrow || key.upArrow) {
+      if (state.isCommentSearchMode) {
+        // Exit search input mode but keep the filter
+        setState((prev) => ({
+          ...prev,
+          isCommentSearchMode: false,
+        }));
+      }
+
+      // Then handle navigation
+      if (input === 'j' || key.downArrow) {
+        setState((prev) => ({
+          ...prev,
+          selectedCommentIndex: Math.min(prev.selectedCommentIndex + 1, filteredComments.length - 1),
+        }));
+      } else if (input === 'k' || key.upArrow) {
+        setState((prev) => ({
+          ...prev,
+          selectedCommentIndex: Math.max(prev.selectedCommentIndex - 1, 0),
+        }));
+      }
+      return;
+    }
+
+    // Block other actions when in search input mode (let TextInput handle typing)
+    if (state.isCommentSearchMode) {
+      return;
+    }
+
+    // Jump navigation (only when not in search input mode)
+    if (input === 'g') {
       setState((prev) => ({ ...prev, selectedCommentIndex: 0 }));
+      return;
     } else if (input === 'G') {
-      setState((prev) => ({ ...prev, selectedCommentIndex: prev.flatComments.length - 1 }));
+      setState((prev) => ({ ...prev, selectedCommentIndex: filteredComments.length - 1 }));
+      return;
     }
 
     // Collapse/expand
     else if (input === ' ') {
-      const selectedComment = state.flatComments[state.selectedCommentIndex];
+      const selectedComment = filteredComments[state.selectedCommentIndex];
       if (selectedComment !== undefined) {
         const isCollapsed = state.collapsedComments.has(selectedComment.id);
 
@@ -428,7 +532,7 @@ export function App(): React.JSX.Element {
       });
     } else if (input === 'c') {
       // Open selected comment in browser
-      const selectedComment = state.flatComments[state.selectedCommentIndex];
+      const selectedComment = filteredComments[state.selectedCommentIndex];
       if (selectedComment !== undefined && state.currentPost !== null) {
         logger.log(EventType.COMMENT_OPENED_BROWSER, {
           commentId: selectedComment.id,
@@ -440,7 +544,10 @@ export function App(): React.JSX.Element {
 
         state.currentPost.openCommentInBrowser(selectedComment.id).catch(console.error);
       }
-    } else if (key.escape || key.backspace) {
+    }
+
+    // Go back to feed (only if not already handled by search clear above)
+    if ((key.escape || key.backspace) && !state.commentSearchQuery && !state.isCommentSearchMode) {
       // Track time spent and log post closed
       const timeSpent = logger.trackPostClosed();
 
@@ -484,8 +591,12 @@ export function App(): React.JSX.Element {
         <PostView
           post={state.currentPost}
           flatComments={state.flatComments}
+          filteredComments={filteredComments}
           selectedCommentIndex={state.selectedCommentIndex}
           loading={state.loading}
+          commentSearchQuery={state.commentSearchQuery}
+          isCommentSearchMode={state.isCommentSearchMode}
+          onCommentSearchChange={handleCommentSearchChange}
         />
       ) : null}
 
