@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "hn-companion": "./src/tui/index.tsx"
+  },
   "scripts": {
     "tui": "bun run src/tui/index.tsx",
     "dev": "bun run --watch src/index.ts",
